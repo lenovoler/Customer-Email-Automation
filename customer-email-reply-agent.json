@@ -1,0 +1,125 @@
+{
+  "name": "Customer Email Reply Agent",
+  "nodes": [
+    {
+      "name": "New Customer Email",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1,
+      "parameters": {
+        "pollTimes": { "item": [{ "mode": "everyMinute" }] },
+        "simple": false,
+        "filters": {}
+      },
+      "position": [0, 0]
+    },
+    {
+      "name": "Gemini Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "parameters": {
+        "modelName": "models/gemini-3.6-flash"
+      },
+      "position": [220, 220]
+    },
+    {
+      "name": "Reply Format",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"email_id\": { \"type\": \"string\" },\n    \"customer_email\": { \"type\": \"string\" },\n    \"subject\": { \"type\": \"string\" },\n    \"confidence\": { \"type\": \"string\", \"enum\": [\"high\", \"low\"] },\n    \"draft_reply\": { \"type\": \"string\" },\n    \"uncertainty_reason\": { \"type\": \"string\" }\n  },\n  \"required\": [\"email_id\", \"customer_email\", \"subject\", \"confidence\", \"draft_reply\", \"uncertainty_reason\"]\n}"
+      },
+      "position": [460, 400]
+    },
+    {
+      "name": "Email Triage Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "parameters": {
+        "promptType": "define",
+        "text": "=Subject: {{ $json.subject }}\n\nFrom: {{ $json.from.value[0].address }}\n\n{{ $json.text }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are a customer support email assistant. Use ONLY the knowledge base below to answer. Never invent policy or pricing. For uncertainty_reason, always provide a string \u2014 use an empty string \"\" if confidence is high and there is no issue.\n\n--- KNOWLEDGE BASE ---\n\n## Order Tracking & Delivery Policy\n- Standard shipping time: 3-5 business days.\n- Order lookup requires an 8-digit Order ID (e.g. #12345678).\n- If a customer reports a delay past 5 business days, you DO NOT have live tracking access. Confidently acknowledge the delay, explain that support will follow up with tracking details, and set confidence HIGH \u2014 this is a routine, policy-covered response, not an escalation.\n- Only escalate (low confidence) an order-delay email if the customer reports tracking has shown literally no movement for 48+ hours themselves, or there's no order ID given.\n\n## Refund & Return Policy\n- Standard return: full refund to original payment method within 30 days of delivery, if item is unopened/unused. Customer pays return shipping.\n- Damaged or defective item: immediate replacement or full refund, return shipping waived. Requires a photo of the damage.\n- Change of mind after 30 days: store credit only (50% value), subject to manager review.\n\n## Escalation Guidelines - flag as low confidence ONLY if:\n1. Order details (order ID) are missing entirely and needed to help.\n2. The customer sounds frustrated or hostile (words like \"lawsuit\", \"scam\", \"report\", aggressive language).\n3. It's a refund request exceeding $200.\n4. The request falls outside everything covered above.\n\n## Tone\nEmpathetic, professional, clear, concise. Structure: acknowledge issue -> provide solution/policy -> next steps. Sign off with \"Best regards, Support Team\".\n\n--- END KNOWLEDGE BASE ---\n\nDecide confidence based on the escalation guidelines above. Default to HIGH confidence for anything clearly covered by the knowledge base above \u2014 only use LOW for the specific triggers listed. Set uncertainty_reason to an empty string when confidence is high."
+        }
+      },
+      "position": [220, 0]
+    },
+    {
+      "name": "Confident?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            { "leftValue": "={{ $json.output.confidence }}", "operator": { "type": "string", "operation": "equals" }, "rightValue": "high" }
+          ],
+          "combinator": "and"
+        }
+      },
+      "position": [440, 0]
+    },
+    {
+      "name": "Send Reply",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "parameters": {
+        "sendTo": "={{ $json.output.customer_email }}",
+        "subject": "={{ \"Re: \" + $json.output.subject }}",
+        "message": "={{ $json.output.draft_reply }}",
+        "options": {}
+      },
+      "position": [660, -120]
+    },
+    {
+      "name": "Add to Approval Queue",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "mode": "id", "value": "<YOUR_GOOGLE_SHEET_ID>" },
+        "sheetName": { "__rl": true, "mode": "list", "value": "<YOUR_SHEET_GID>", "cachedResultName": "Sheet1" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "email_id": "={{ $json.output.email_id }}",
+            "customer_email": "={{ $json.output.customer_email }}",
+            "subject": "={{ $json.output.subject }}",
+            "draft_reply": "={{ $json.output.draft_reply }}",
+            "uncertainty_reason": "={{ $json.output.uncertainty_reason }}",
+            "status": "pending"
+          }
+        },
+        "options": {}
+      },
+      "position": [660, 100]
+    },
+    {
+      "name": "Notify Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "parameters": {
+        "select": "channel",
+        "channelId": { "__rl": true, "mode": "id", "value": "<YOUR_SLACK_CHANNEL_ID>" },
+        "text": "=New email flagged for review: *{{ $(\"Email Triage Agent\").item.json.output.subject }}*\nReason: {{ $(\"Email Triage Agent\").item.json.output.uncertainty_reason }}\nOpen the approval queue to review."
+      },
+      "position": [880, 100]
+    }
+  ],
+  "connections": {
+    "New Customer Email": { "main": [[{ "node": "Email Triage Agent", "type": "main", "index": 0 }]] },
+    "Gemini Model": { "ai_languageModel": [[{ "node": "Email Triage Agent", "type": "ai_languageModel", "index": 0 }]] },
+    "Reply Format": { "ai_outputParser": [[{ "node": "Email Triage Agent", "type": "ai_outputParser", "index": 0 }]] },
+    "Email Triage Agent": { "main": [[{ "node": "Confident?", "type": "main", "index": 0 }]] },
+    "Confident?": {
+      "main": [
+        [{ "node": "Send Reply", "type": "main", "index": 0 }],
+        [{ "node": "Add to Approval Queue", "type": "main", "index": 0 }]
+      ]
+    },
+    "Add to Approval Queue": { "main": [[{ "node": "Notify Slack", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" }
+}

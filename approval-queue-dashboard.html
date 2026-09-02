@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Reply Queue</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,500;0,600;1,500&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+  :root{
+    --paper:#FAF9F6;
+    --card:#FFFFFF;
+    --ink:#211F1D;
+    --muted:#726E68;
+    --hairline:#E4E0D8;
+    --approve:#3E6259;
+    --approve-tint:#E9F0EC;
+    --reject:#A34632;
+    --reject-tint:#F6EAE6;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'IBM Plex Sans', sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{
+    max-width:640px;
+    margin:0 auto;
+    padding:40px 20px 80px;
+  }
+  header{
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    border-bottom:1px solid var(--hairline);
+    padding-bottom:18px;
+    margin-bottom:28px;
+  }
+  h1{
+    font-family:'Lora', serif;
+    font-weight:600;
+    font-size:26px;
+    margin:0;
+    letter-spacing:-0.01em;
+  }
+  .count{
+    font-size:14px;
+    color:var(--muted);
+  }
+  .card{
+    background:var(--card);
+    border:1px solid var(--hairline);
+    padding:20px 22px;
+    margin-bottom:14px;
+    transition:opacity .35s ease, transform .35s ease;
+  }
+  .card.removing{
+    opacity:0;
+    transform:translateX(12px);
+  }
+  .card-top{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap:12px;
+    margin-bottom:10px;
+  }
+  .subject{
+    font-family:'Lora', serif;
+    font-weight:600;
+    font-size:17px;
+    line-height:1.35;
+  }
+  .from{
+    font-size:13px;
+    color:var(--muted);
+    margin-top:2px;
+  }
+  .reason{
+    display:inline-block;
+    font-size:12.5px;
+    color:#8A5A3A;
+    background:#FBF0E4;
+    border:1px solid #EFDCC4;
+    padding:3px 9px;
+    margin-bottom:12px;
+  }
+  .draft{
+    font-size:14.5px;
+    line-height:1.6;
+    color:#3A3835;
+    white-space:pre-wrap;
+    border-left:2px solid var(--hairline);
+    padding-left:14px;
+    margin-bottom:16px;
+  }
+  textarea.draft-edit{
+    width:100%;
+    font-family:'IBM Plex Sans', sans-serif;
+    font-size:14.5px;
+    line-height:1.6;
+    color:var(--ink);
+    border:1px solid var(--hairline);
+    padding:10px 12px;
+    margin-bottom:16px;
+    resize:vertical;
+    min-height:110px;
+  }
+  .actions{
+    display:flex;
+    gap:10px;
+  }
+  button{
+    font-family:'IBM Plex Sans', sans-serif;
+    font-size:14px;
+    font-weight:500;
+    padding:9px 16px;
+    border:1px solid transparent;
+    cursor:pointer;
+    display:inline-flex;
+    align-items:center;
+    gap:7px;
+  }
+  .btn-approve{
+    background:var(--approve);
+    color:#fff;
+  }
+  .btn-approve:hover{background:#31504A;}
+  .btn-reject{
+    background:var(--reject-tint);
+    color:var(--reject);
+    border-color:#E7C9BE;
+  }
+  .btn-reject:hover{background:#F0DAD2;}
+  .btn-edit{
+    background:transparent;
+    color:var(--muted);
+    border-color:var(--hairline);
+  }
+  .btn-edit:hover{border-color:#C9C3B8;}
+  .empty{
+    text-align:center;
+    padding:60px 20px;
+    color:var(--muted);
+  }
+  .empty .mark{
+    font-family:'Lora', serif;
+    font-size:19px;
+    color:var(--ink);
+    margin-bottom:6px;
+  }
+  .toast{
+    position:fixed;
+    bottom:24px;
+    left:50%;
+    transform:translateX(-50%) translateY(10px);
+    background:var(--ink);
+    color:#fff;
+    font-size:13.5px;
+    padding:10px 18px;
+    opacity:0;
+    transition:opacity .25s ease, transform .25s ease;
+    pointer-events:none;
+  }
+  .toast.show{
+    opacity:1;
+    transform:translateX(-50%) translateY(0);
+  }
+  svg{display:block;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Reply queue</h1>
+    <div class="count" id="count"></div>
+  </header>
+  <div id="list"></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const seed = [
+  {
+    id: "e1",
+    from: "jmartinez@northgatelogistics.com",
+    subject: "Refund for order #4821 — damaged on arrival",
+    reason: "Requests exception to standard refund window",
+    draft: "Dear Mr. Martinez,\n\nThank you for letting us know about the damage to order #4821. I understand this falls just outside our standard 30-day window, and I'd like to make an exception given the circumstances you've described.\n\nWe will process a full refund to your original payment method within 3–5 business days.\n\nKind regards,\nCustomer Support"
+  },
+  {
+    id: "e2",
+    from: "priya.desai@fieldworkstudio.io",
+    subject: "Can I combine two discount codes?",
+    reason: "Not covered in knowledge base",
+    draft: "Dear Ms. Desai,\n\nThank you for reaching out. Our current promotions are generally structured to be used one at a time, though I want to confirm this applies to the specific codes you have before giving a final answer.\n\nCould you share the two codes you're hoping to combine? I'll confirm shortly.\n\nKind regards,\nCustomer Support"
+  },
+  {
+    id: "e3",
+    from: "d.okafor@brightlanemedia.com",
+    subject: "Extremely disappointed with support wait times",
+    reason: "Customer is upset — needs judgment call",
+    draft: "Dear Mr. Okafor,\n\nI'm sorry for the delay you experienced, and I understand the frustration that comes with waiting longer than you should have to for a response.\n\nI'd like to look into what happened with your case directly — could you share your ticket number so I can follow up personally?\n\nKind regards,\nCustomer Support"
+  }
+];
+
+const API_BASE = "https://rubenj.app.n8n.cloud/webhook";
+let queue = [];
+
+function iconCheck(){
+  return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M4 12l6 6L20 6"/></svg>';
+}
+function iconX(){
+  return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+}
+
+function escapeHtml(s){
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+async function loadQueue(){
+  try{
+    const res = await fetch(`${API_BASE}/pending-emails`);
+    if(!res.ok) throw new Error('Request failed');
+    const data = await res.json();
+    queue = Array.isArray(data) ? data : seed;
+  }catch(e){
+    console.error('Failed to load live queue, showing sample data', e);
+    queue = seed;
+  }
+  render();
+}
+
+function render(){
+  const list = document.getElementById('list');
+  const count = document.getElementById('count');
+  count.textContent = queue.length ? `${queue.length} awaiting review` : '';
+
+  if(queue.length === 0){
+    list.innerHTML = `<div class="empty"><div class="mark">Queue is clear</div>Flagged drafts will appear here as they come in.</div>`;
+    return;
+  }
+
+  list.innerHTML = queue.map(item => `
+    <div class="card" id="card-${item.email_id}">
+      <div class="card-top">
+        <div>
+          <div class="subject">${escapeHtml(item.subject || '')}</div>
+          <div class="from">${escapeHtml(item.customer_email || '')}</div>
+        </div>
+      </div>
+      <div class="reason">${escapeHtml(item.uncertainty_reason || '')}</div>
+      <div class="draft" id="draft-view-${item.email_id}">${escapeHtml(item.draft_reply || '')}</div>
+      <textarea class="draft-edit" id="draft-edit-${item.email_id}" style="display:none;">${escapeHtml(item.draft_reply || '')}</textarea>
+      <div class="actions">
+        <button class="btn-approve" onclick="approve('${item.email_id}')">${iconCheck()} Approve &amp; send</button>
+        <button class="btn-edit" onclick="toggleEdit('${item.email_id}')">Edit</button>
+        <button class="btn-reject" onclick="reject('${item.email_id}')">${iconX()} Discard</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function toggleEdit(id){
+  const view = document.getElementById(`draft-view-${id}`);
+  const edit = document.getElementById(`draft-edit-${id}`);
+  const editing = edit.style.display !== 'none';
+  if(editing){
+    const item = queue.find(q => q.email_id === id);
+    item.draft_reply = edit.value;
+    view.textContent = edit.value;
+    edit.style.display = 'none';
+    view.style.display = 'block';
+  } else {
+    view.style.display = 'none';
+    edit.style.display = 'block';
+    edit.focus();
+  }
+}
+
+function removeCard(id){
+  const card = document.getElementById(`card-${id}`);
+  if(card) card.classList.add('removing');
+  setTimeout(() => {
+    queue = queue.filter(q => q.email_id !== id);
+    render();
+  }, 320);
+}
+
+async function approve(id){
+  const item = queue.find(q => q.email_id === id);
+  try{
+    const res = await fetch(`${API_BASE}/approve-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(item)
+    });
+    if(!res.ok) throw new Error('Request failed');
+    showToast('Reply sent');
+    removeCard(id);
+  }catch(e){
+    console.error(e);
+    showToast('Failed to send — try again');
+  }
+}
+
+async function reject(id){
+  try{
+    const res = await fetch(`${API_BASE}/reject-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email_id: id })
+    });
+    if(!res.ok) throw new Error('Request failed');
+    showToast('Draft discarded');
+    removeCard(id);
+  }catch(e){
+    console.error(e);
+    showToast('Failed to discard — try again');
+  }
+}
+
+loadQueue();
+</script>
+</body>
+</html>
